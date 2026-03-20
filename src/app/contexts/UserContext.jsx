@@ -1,37 +1,31 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { ROLES, hasPermission, canAccessRoute, getDefaultRoute, isValidRole } from '@/app/constants/roles';
+import {
+  API_ORIGIN,
+  clearSession,
+  getStoredUser,
+  persistSession,
+} from '@/app/config/runtime';
 
 const UserContext = createContext(undefined);
 
 export function UserProvider({ children }) {
   const [user, setUser] = useState(null);
-  const apiBase = (import.meta && import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:4000';
+  const apiBase = API_ORIGIN;
 
   // Carregar usuário do localStorage ao iniciar
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    
-    const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) {
-      try {
-        const userData = JSON.parse(savedUser);
-        setUser(userData);
-      } catch (error) {
-        console.error('Erro ao carregar usuário do localStorage:', error);
-        localStorage.removeItem('currentUser');
-      }
-    }
+
+    const userData = getStoredUser();
+    if (userData) setUser(userData);
   }, []);
 
   // Salvar usuário no localStorage quando mudar
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    
-    if (user) {
-      localStorage.setItem('currentUser', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('currentUser');
-    }
+
+    persistSession(user, undefined);
   }, [user]);
 
   const registerUser = async (userData, password) => {
@@ -61,7 +55,7 @@ export function UserProvider({ children }) {
           user: json.user,
           requiresEmailVerification: !!json?.requiresEmailVerification,
           requiresTwoFactor: !!json?.requiresTwoFactor,
-          verificationSent: !!json?.verificationSent,
+          verification: json?.verification || null,
         };
       }
       console.error('API register error', json);
@@ -82,16 +76,20 @@ export function UserProvider({ children }) {
       const json = await resp.json();
       if (resp.ok) {
         setUser(json.user);
+        persistSession(json.user, json.token || null);
         return { ok: true };
       }
-      if (json?.error === '2fa_required') {
+      if (json?.error === 'otp_required') {
         return { ok: false, requires2fa: true };
       }
       if (json?.error === 'email_not_verified') {
         return { ok: false, emailNotVerified: true };
       }
-      if (json?.error === '2fa_setup_required') {
+      if (json?.error === 'otp_setup_required') {
         return { ok: false, requires2faSetup: true };
+      }
+      if (json?.error === 'invalid_otp') {
+        return { ok: false, requires2fa: true, error: 'invalid_otp' };
       }
       return { ok: false, error: json?.error || 'invalid_credentials' };
     } catch (err) {
@@ -112,14 +110,13 @@ export function UserProvider({ children }) {
     }
 
     setUser(userData);
+    persistSession(userData, null);
     return true;
   };
 
   const logout = () => {
     setUser(null);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('currentUser');
-    }
+    clearSession();
   };
 
   const updateUser = (updates) => {

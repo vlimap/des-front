@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { useUser } from '@/app/contexts/UserContext';
 import { ROLES } from '@/app/constants/roles';
 import { CompanyJobsManagement } from '@/app/components/CompanyJobsManagement';
+import { IS_PRODUCTION } from '@/app/config/runtime';
 import * as api from '@/app/services/api';
 
 // Helper: calcula match aleatório baseado no id (para vagas da API que não têm match)
@@ -63,7 +64,10 @@ export function JobsPage() {
       setApiJobs(fetched);
     } catch (error) {
       console.error('Erro ao carregar vagas do servidor:', error);
-      // silently fallback to mock only
+      setApiJobs([]);
+      if (IS_PRODUCTION) {
+        toast.error('Não foi possível carregar as vagas no momento.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -81,11 +85,13 @@ export function JobsPage() {
     }
   }, [user?.appliedJobs]);
 
-  // Combinar vagas da API com mockJobs (mock como fallback/exemplo)
-  const allJobs = [
-    ...apiJobs,
-    ...mockJobs.filter(mj => !apiJobs.some(aj => aj.id === mj.id)),
-  ];
+  const isMockFallbackJob = (jobId: string) =>
+    !apiJobs.some((job) => job.id === jobId) && mockJobs.some((job) => job.id === jobId);
+
+  // Em produção exibimos apenas dados reais do backend.
+  const allJobs = IS_PRODUCTION
+    ? apiJobs
+    : [...apiJobs, ...mockJobs.filter((mj) => !apiJobs.some((aj) => aj.id === mj.id))];
 
   const filteredJobs = allJobs.filter(job => {
     if (filter.area !== 'all' && job.area !== filter.area) return false;
@@ -151,9 +157,12 @@ export function JobsPage() {
       toast.success(`Candidatura enviada para "${job.title}"!`);
       markApplied(job);
     } catch (error: any) {
-      // For mock jobs that don't exist in DB, still show success
-      toast.success(`Candidatura enviada para "${job.title}"!`);
-      markApplied(job);
+      if (!IS_PRODUCTION && isMockFallbackJob(job.id)) {
+        toast.success(`Candidatura enviada para "${job.title}"!`);
+        markApplied(job);
+      } else {
+        toast.error(error?.message || 'Erro ao enviar candidatura.');
+      }
     } finally {
       setApplyingJobId(null);
     }
@@ -218,12 +227,18 @@ export function JobsPage() {
       toast.error('Não foi possível enviar o currículo. Tente novamente.');
       return;
     }
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Envie um currículo em PDF.');
+      return;
+    }
 
+    let resumePatch: { resumeUrl?: string; resumeFileName?: string } | undefined;
     try {
       setApplyingJobId(job.id);
       const upload = await api.uploadResume(file, user.id);
-      const resumeUrl = upload.signedUrl || upload.url;
+      const resumeUrl = upload.downloadUrl || upload.url;
       const resumeFileName = upload.fileName || file.name;
+      resumePatch = { resumeUrl, resumeFileName };
 
       await api.applyToJob({
         jobId: job.id,
@@ -237,9 +252,14 @@ export function JobsPage() {
       });
 
       toast.success(`Candidatura enviada para "${job.title}"!`);
-      markApplied(job, { resumeUrl, resumeFileName });
+      markApplied(job, resumePatch);
     } catch (error: any) {
-      toast.error('Erro ao enviar currículo ou candidatura.');
+      if (!IS_PRODUCTION && isMockFallbackJob(job.id) && resumePatch) {
+        toast.success(`Candidatura enviada para "${job.title}"!`);
+        markApplied(job, resumePatch);
+      } else {
+        toast.error(error?.message || 'Erro ao enviar currículo ou candidatura.');
+      }
     } finally {
       setApplyingJobId(null);
     }
@@ -555,7 +575,7 @@ export function JobsPage() {
       <input
         ref={resumeInputRef}
         type="file"
-        accept=".pdf,.doc,.docx"
+        accept=".pdf,application/pdf"
         onChange={handleResumeSelected}
         className="hidden"
       />

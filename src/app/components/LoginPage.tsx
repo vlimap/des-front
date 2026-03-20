@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/app/components/ui/button';
+import { Alert, AlertDescription } from '@/app/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
@@ -33,7 +34,7 @@ export function LoginPage() {
       }
       if (result?.requires2fa) {
         setRequires2fa(true);
-        setError('Digite o código do autenticador para continuar.');
+        setError(result?.error === 'invalid_otp' ? 'Código do autenticador inválido.' : 'Digite o código do autenticador para continuar.');
         return;
       }
       if (result?.emailNotVerified) {
@@ -54,8 +55,12 @@ export function LoginPage() {
     if (!email) return;
     setIsSendingCode(true);
     try {
-      await requestEmailVerification({ email });
-      toast.success('Código de verificação enviado.');
+      const response = await requestEmailVerification({ email });
+      if (response?.otp) {
+        toast.success(`Código de verificação: ${response.otp}`);
+      } else {
+        toast.success('Código de verificação enviado.');
+      }
     } catch (err) {
       toast.error('Não foi possível enviar o código.');
     } finally {

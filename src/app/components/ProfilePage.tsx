@@ -21,15 +21,19 @@ export function ProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [securityStatus, setSecurityStatus] = useState({
     emailVerified: false,
+    otpConfigured: false,
     totpEnabled: false,
+    require2fa: false,
     lgpdConsentAt: null,
   });
   const [emailCode, setEmailCode] = useState('');
+  const [devEmailOtp, setDevEmailOtp] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [twoFactorSecret, setTwoFactorSecret] = useState('');
   const [twoFactorOtp, setTwoFactorOtp] = useState('');
   const [qrCodeUrl, setQrCodeUrl] = useState('');
+  const [isUploadingResume, setIsUploadingResume] = useState(false);
 
   if (!user) return null;
 
@@ -141,7 +145,8 @@ export function ProfilePage() {
     if (!user?.email) return;
     setIsSendingCode(true);
     try {
-      await api.requestEmailVerification({ userId: user.id, email: user.email });
+      const response = await api.requestEmailVerification({ userId: user.id, email: user.email });
+      setDevEmailOtp(response?.otp || '');
       toast.success('Código de verificação enviado.');
     } catch (error) {
       toast.error('Não foi possível enviar o código.');
@@ -157,6 +162,7 @@ export function ProfilePage() {
       await api.verifyEmail({ userId: user.id, code: emailCode });
       setSecurityStatus((prev) => ({ ...prev, emailVerified: true }));
       updateUser({ emailVerified: true });
+      setDevEmailOtp('');
       toast.success('E-mail verificado com sucesso.');
     } catch (error) {
       toast.error('Código inválido ou expirado.');
@@ -169,6 +175,7 @@ export function ProfilePage() {
     try {
       const data = await api.setupTwoFactor({ userId: user.id, email: user.email });
       setTwoFactorSecret(data.secret || '');
+      setSecurityStatus((prev) => ({ ...prev, otpConfigured: !!data.secret }));
       toast.success('2FA configurado. Escaneie o QR e confirme.');
     } catch (error) {
       toast.error('Erro ao configurar 2FA.');
@@ -178,8 +185,8 @@ export function ProfilePage() {
   const handleVerify2FA = async () => {
     try {
       await api.verifyTwoFactor({ userId: user.id, token: twoFactorOtp });
-      setSecurityStatus((prev) => ({ ...prev, totpEnabled: true }));
-      updateUser({ totpEnabled: true });
+      setSecurityStatus((prev) => ({ ...prev, otpConfigured: true, totpEnabled: true, require2fa: true }));
+      updateUser({ otpConfigured: true, totpEnabled: true, require2fa: true });
       toast.success('2FA ativado com sucesso.');
       setTwoFactorOtp('');
     } catch (error) {
@@ -190,11 +197,44 @@ export function ProfilePage() {
   const handleDisable2FA = async () => {
     try {
       await api.disableTwoFactor({ userId: user.id });
-      setSecurityStatus((prev) => ({ ...prev, totpEnabled: false }));
-      updateUser({ totpEnabled: false });
+      setSecurityStatus((prev) => ({ ...prev, otpConfigured: false, totpEnabled: false, require2fa: false }));
+      updateUser({ otpConfigured: false, totpEnabled: false, require2fa: false });
+      setTwoFactorSecret('');
+      setTwoFactorOtp('');
       toast.success('2FA desativado.');
     } catch (error) {
       toast.error('Erro ao desativar 2FA.');
+    }
+  };
+
+  const handleResumeUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file || !user?.id) return;
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Envie um currículo em PDF.');
+      return;
+    }
+
+    setIsUploadingResume(true);
+    try {
+      const upload = await api.uploadResume(file);
+      const resumeUrl = upload.downloadUrl || upload.url;
+      const resumeFileName = upload.fileName || file.name;
+      const response = await api.updateUserProfile(user.id, { resumeUrl, resumeFileName });
+
+      if (response?.user) {
+        updateUser(response.user);
+      } else {
+        updateUser({ resumeUrl, resumeFileName });
+      }
+
+      toast.success('Currículo atualizado com sucesso.');
+    } catch (error) {
+      toast.error(error?.message || 'Não foi possível enviar o currículo.');
+    } finally {
+      setIsUploadingResume(false);
     }
   };
 
@@ -221,16 +261,23 @@ export function ProfilePage() {
             )}
           </div>
           {!securityStatus.emailVerified && (
-            <div className="flex flex-col md:flex-row gap-2">
-              <Input
-                value={emailCode}
-                onChange={(e) => setEmailCode(e.target.value)}
-                placeholder="Código de verificação"
-              />
-              <Button onClick={handleVerifyEmail} disabled={isVerifyingCode}>
-                {isVerifyingCode ? 'Verificando...' : 'Confirmar'}
-              </Button>
-            </div>
+            <>
+              <div className="flex flex-col md:flex-row gap-2">
+                <Input
+                  value={emailCode}
+                  onChange={(e) => setEmailCode(e.target.value)}
+                  placeholder="Código de verificação"
+                />
+                <Button onClick={handleVerifyEmail} disabled={isVerifyingCode}>
+                  {isVerifyingCode ? 'Verificando...' : 'Confirmar'}
+                </Button>
+              </div>
+              {devEmailOtp && (
+                <p className="text-xs text-amber-700">
+                  Ambiente de desenvolvimento: OTP <span className="font-mono">{devEmailOtp}</span>
+                </p>
+              )}
+            </>
           )}
         </div>
 
@@ -240,6 +287,9 @@ export function ProfilePage() {
             <Badge variant={securityStatus.totpEnabled ? 'default' : 'secondary'}>
               {securityStatus.totpEnabled ? 'Ativa' : 'Inativa'}
             </Badge>
+            {!securityStatus.totpEnabled && securityStatus.otpConfigured && (
+              <Badge variant="outline">Pendente de ativação</Badge>
+            )}
             {securityStatus.totpEnabled ? (
               <Button variant="outline" size="sm" onClick={handleDisable2FA}>Desativar 2FA</Button>
             ) : (
@@ -1387,24 +1437,35 @@ export function ProfilePage() {
           </CardTitle>
           <CardDescription>Upload e gerenciamento do seu currículo</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {user.resumeUrl ? (
             <div className="flex items-center justify-between p-4 rounded-lg border">
               <div>
-                <p className="font-medium">curriculo.pdf</p>
+                <p className="font-medium">{user.resumeFileName || 'curriculo.pdf'}</p>
                 <p className="text-sm text-muted-foreground">Enviado</p>
               </div>
-              <Button variant="outline" size="sm">
-                Atualizar
-              </Button>
+              <a href={user.resumeUrl} target="_blank" rel="noreferrer" className="text-sm text-primary underline-offset-4 hover:underline">
+                Abrir PDF
+              </a>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg">
               <Upload className="h-8 w-8 text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground mb-4">Nenhum currículo enviado</p>
-              <Button>Enviar Currículo</Button>
             </div>
           )}
+          <div className="space-y-2">
+            <Label htmlFor="resumeUpload">Enviar currículo</Label>
+            <Input
+              id="resumeUpload"
+              type="file"
+              accept=".pdf,application/pdf"
+              disabled={isUploadingResume}
+              onChange={handleResumeUpload}
+            />
+            <p className="text-xs text-muted-foreground">Somente PDF. O arquivo enviado fica disponível para as candidaturas.</p>
+            {isUploadingResume && <p className="text-xs text-muted-foreground">Enviando currículo...</p>}
+          </div>
         </CardContent>
       </Card>
 

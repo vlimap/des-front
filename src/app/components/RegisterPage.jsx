@@ -61,7 +61,7 @@ export function RegisterPage() {
     if (!formData.email.trim()) newErrors.email = 'E-mail é obrigatório';
     else if (!/\S+@\S+\.\S+/.test(formData.email)) newErrors.email = 'E-mail inválido';
     if (!formData.password) newErrors.password = 'Senha é obrigatória';
-    else if (formData.password.length < 6) newErrors.password = 'Senha deve ter pelo menos 6 caracteres';
+    else if (formData.password.length < 8) newErrors.password = 'Senha deve ter pelo menos 8 caracteres';
     if (formData.password !== formData.confirmPassword) newErrors.confirmPassword = 'As senhas não coincidem';
     if (!formData.acceptTerms) newErrors.acceptTerms = 'Aceite os Termos de Uso';
     if (!formData.acceptSecurity) newErrors.acceptSecurity = 'Aceite os Termos de Segurança';
@@ -109,7 +109,7 @@ export function RegisterPage() {
       userData.age = parseInt(formData.age);
       userData.area = formData.area;
       userData.education = formData.education;
-      userData.resumeUrl = formData.resume ? URL.createObjectURL(formData.resume) : undefined;
+      userData.resumeFileName = formData.resume ? formData.resume.name : undefined;
       userData.completedCourses = [];
       userData.appliedJobs = [];
       userData.enrolledCourses = [];
@@ -140,7 +140,13 @@ export function RegisterPage() {
       const ok = typeof result === 'boolean' ? result : result?.ok;
       if (ok) {
         if (result?.requiresEmailVerification || result?.requiresTwoFactor) {
-          setPendingVerification({ userId: result?.user?.id, email: result?.user?.email });
+          setPendingVerification({
+            userId: result?.user?.id,
+            email: result?.user?.email,
+            requiresTwoFactor: !!result?.requiresTwoFactor,
+            verification: result?.verification || null,
+          });
+          setEmailCode(result?.verification?.otp || '');
           setVerificationError('');
           return;
         }
@@ -166,7 +172,10 @@ export function RegisterPage() {
     setIsSendingVerification(true);
     setVerificationError('');
     try {
-      await requestEmailVerification({ userId: pendingVerification.userId, email: pendingVerification.email });
+      const response = await requestEmailVerification({ userId: pendingVerification.userId, email: pendingVerification.email });
+      if (response?.otp) {
+        setEmailCode(response.otp);
+      }
     } catch (err) {
       setVerificationError('Não foi possível enviar o código de verificação.');
     } finally {
@@ -219,14 +228,15 @@ export function RegisterPage() {
   };
 
   if (pendingVerification) {
-    const canFinish = emailVerified && twoFactorVerified;
+    const requiresTwoFactor = !!pendingVerification.requiresTwoFactor;
+    const canFinish = emailVerified && (!requiresTwoFactor || twoFactorVerified);
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
         <Card className="w-full max-w-2xl">
           <CardHeader>
             <CardTitle className="text-xl">Finalize seu cadastro</CardTitle>
             <CardDescription>
-              Para concluir, verifique seu e-mail e ative o 2FA.
+              Verifique seu e-mail para concluir o cadastro. O 2FA fica disponível para ativação quando exigido.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -238,6 +248,13 @@ export function RegisterPage() {
 
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Verificação de e-mail</h3>
+              {pendingVerification.verification?.otp && (
+                <Alert>
+                  <AlertDescription>
+                    Ambiente de desenvolvimento: código OTP <span className="font-mono">{pendingVerification.verification.otp}</span>
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="flex flex-col md:flex-row gap-2">
                 <Button type="button" variant="outline" onClick={handleSendVerification} disabled={isSendingVerification}>
                   {isSendingVerification ? 'Enviando...' : 'Enviar código'}
@@ -253,30 +270,32 @@ export function RegisterPage() {
               </div>
             </div>
 
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Autenticação em duas etapas (2FA)</h3>
-              <div className="flex flex-col md:flex-row gap-2">
-                <Button type="button" variant="outline" onClick={handleSetup2fa} disabled={isSettingUp2fa}>
-                  {isSettingUp2fa ? 'Gerando...' : 'Gerar 2FA'}
-                </Button>
-                <Input
-                  value={twoFactorToken}
-                  onChange={(e) => setTwoFactorToken(e.target.value)}
-                  placeholder="Código do autenticador"
-                />
-                <Button type="button" onClick={handleVerify2fa} disabled={isVerifying2fa || twoFactorVerified}>
-                  {twoFactorVerified ? 'Ativado' : isVerifying2fa ? 'Verificando...' : 'Ativar'}
-                </Button>
-              </div>
-              {twoFactorSecret && (
-                <div className="text-xs text-muted-foreground space-y-1">
-                  <p>Chave secreta: <span className="font-mono">{twoFactorSecret}</span></p>
-                  {twoFactorUrl && (
-                    <p>URL otpauth: <span className="font-mono break-all">{twoFactorUrl}</span></p>
-                  )}
+            {requiresTwoFactor && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Autenticação em duas etapas (2FA)</h3>
+                <div className="flex flex-col md:flex-row gap-2">
+                  <Button type="button" variant="outline" onClick={handleSetup2fa} disabled={isSettingUp2fa}>
+                    {isSettingUp2fa ? 'Gerando...' : 'Gerar 2FA'}
+                  </Button>
+                  <Input
+                    value={twoFactorToken}
+                    onChange={(e) => setTwoFactorToken(e.target.value)}
+                    placeholder="Código do autenticador"
+                  />
+                  <Button type="button" onClick={handleVerify2fa} disabled={isVerifying2fa || twoFactorVerified}>
+                    {twoFactorVerified ? 'Ativado' : isVerifying2fa ? 'Verificando...' : 'Ativar'}
+                  </Button>
                 </div>
-              )}
-            </div>
+                {twoFactorSecret && (
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p>Chave secreta: <span className="font-mono">{twoFactorSecret}</span></p>
+                    {twoFactorUrl && (
+                      <p>URL otpauth: <span className="font-mono break-all">{twoFactorUrl}</span></p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-col sm:flex-row gap-3">
               <Button type="button" variant="outline" onClick={() => navigate('/')}>Voltar</Button>
@@ -412,7 +431,7 @@ export function RegisterPage() {
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                     className={`h-9 md:h-10 text-sm ${errors.password ? 'border-red-500' : ''}`}
-                    placeholder="Mínimo 6 caracteres"
+                    placeholder="Mínimo 8 caracteres"
                   />
                   {errors.password && <p className="text-xs text-red-500">{errors.password}</p>}
                 </div>
@@ -507,13 +526,13 @@ export function RegisterPage() {
                       <Input
                         id="resume"
                         type="file"
-                        accept=".pdf,.doc,.docx"
+                        accept=".pdf,application/pdf"
                         onChange={(e) => setFormData({ ...formData, resume: e.target.files?.[0] || null })}
                         className="flex-1 h-9 md:h-10 text-sm file:text-sm"
                       />
                       <Upload className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground shrink-0" />
                     </div>
-                    <p className="text-xs text-muted-foreground">Formatos aceitos: PDF, DOC, DOCX</p>
+                    <p className="text-xs text-muted-foreground">Somente PDF. O envio efetivo acontece quando a candidatura for enviada.</p>
                   </div>
 
                   <div className="space-y-2 md:col-span-2">
