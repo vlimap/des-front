@@ -23,6 +23,7 @@ Variáveis suportadas:
 Observação:
 
 - Em produção, se `VITE_API_URL` não estiver definido, o frontend usa `window.location.origin` como fallback.
+- Como o projeto usa Vite, `VITE_API_URL` e `VITE_APP_BASE_PATH` precisam existir no momento do build do workflow, não apenas nas app settings do App Service.
 
 ## Executar em desenvolvimento
 
@@ -55,6 +56,7 @@ O resultado do build é gerado em `dist/`.
 - O App Service é configurado para servir a SPA com `pm2 serve /home/site/wwwroot --no-daemon --spa`.
 - O workflow serializa deploys para evitar conflito entre execuções concorrentes.
 - Se existir `WEBSITE_RUN_FROM_PACKAGE`, o workflow remove essa app setting antes do deploy.
+- O workflow usa `vars.VITE_API_URL` e `vars.VITE_APP_BASE_PATH`; se não existirem, ele cai no backend `valneiback` atual e base path `/`.
 
 ## Checklist de produção
 

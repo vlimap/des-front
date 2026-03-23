@@ -28,6 +28,17 @@ export function UserProvider({ children }) {
     persistSession(user, undefined);
   }, [user]);
 
+  const readJsonSafely = async (resp) => {
+    const text = await resp.text();
+    if (!text) return {};
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: 'invalid_server_response', raw: text };
+    }
+  };
+
   const registerUser = async (userData, password) => {
     try {
       const resp = await fetch(`${apiBase.replace(/\/+$/, '')}/api/register`, {
@@ -35,9 +46,12 @@ export function UserProvider({ children }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...userData, password }),
       });
-      let json = null;
-      try { json = await resp.json(); } catch {}
+      const json = await readJsonSafely(resp);
       if (resp.ok) {
+        if (!json || typeof json !== 'object' || !json.user) {
+          console.error('API register returned unexpected payload', json);
+          return { ok: false, error: 'Resposta inválida do servidor de cadastro.' };
+        }
         if (!json?.requiresEmailVerification && !json?.requiresTwoFactor) {
           setUser(json.user);
           try {
@@ -73,8 +87,12 @@ export function UserProvider({ children }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, otp }),
       });
-      const json = await resp.json();
+      const json = await readJsonSafely(resp);
       if (resp.ok) {
+        if (!json || typeof json !== 'object' || !json.user) {
+          console.error('API login returned unexpected payload', json);
+          return { ok: false, error: 'invalid_server_response' };
+        }
         setUser(json.user);
         persistSession(json.user, json.token || null);
         return { ok: true };
