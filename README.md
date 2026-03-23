@@ -49,6 +49,13 @@ npm run preview
 
 O resultado do build é gerado em `dist/`.
 
+## Deploy no Azure App Service
+
+- O workflow publica apenas o conteúdo de `dist/`.
+- O App Service é configurado para servir a SPA com `pm2 serve /home/site/wwwroot --no-daemon --spa`.
+- O workflow serializa deploys para evitar conflito entre execuções concorrentes.
+- Se existir `WEBSITE_RUN_FROM_PACKAGE`, o workflow remove essa app setting antes do deploy.
+
 ## Checklist de produção
 
 - Definir `VITE_API_URL` com a URL pública do backend

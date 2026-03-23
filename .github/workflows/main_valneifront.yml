@@ -9,6 +9,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: valneifront-deploy
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -32,8 +36,8 @@ jobs:
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
-          name: node-app
-          path: .
+          name: front-dist
+          path: dist
 
   deploy:
     runs-on: ubuntu-latest
@@ -46,7 +50,8 @@ jobs:
       - name: Download artifact from build job
         uses: actions/download-artifact@v4
         with:
-          name: node-app
+          name: front-dist
+          path: dist-package
       
       - name: Login to Azure
         uses: azure/login@v2
@@ -55,11 +60,36 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_4E3743D1F49C419F8A9683C94A94C2FB }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_133976B022064D89AF3637C8189C9E84 }}
 
+      - name: Resolve Azure Web App resource group
+        id: resolve-webapp
+        run: |
+          resource_group="$(az resource list --name 'valneifront' --resource-type 'Microsoft.Web/sites' --query '[0].resourceGroup' -o tsv)"
+          if [ -z "$resource_group" ]; then
+            echo "Unable to resolve resource group for valneifront" >&2
+            exit 1
+          fi
+
+          echo "resource_group=$resource_group" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure WEBSITE_RUN_FROM_PACKAGE is disabled
+        run: |
+          az webapp config appsettings delete \
+            --resource-group "${{ steps.resolve-webapp.outputs.resource_group }}" \
+            --name 'valneifront' \
+            --setting-names WEBSITE_RUN_FROM_PACKAGE || true
+
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'valneifront'
           slot-name: 'Production'
-          package: .
+          package: ./dist-package
+
+      - name: Configure Azure Web App startup command
+        run: |
+          az webapp config set \
+            --resource-group "${{ steps.resolve-webapp.outputs.resource_group }}" \
+            --name 'valneifront' \
+            --startup-file 'pm2 serve /home/site/wwwroot --no-daemon --spa'
           
